@@ -31,12 +31,12 @@ class ProductRequest(BaseModel):
 
 @app.post("/rank_product/")
 def rank_product(request: ProductRequest):
-    product_name = request.product_name
-    
-    if product_name not in df['Product'].values:
+    product_name = request.product_name.upper()  # แปลงเป็นพิมพ์ใหญ่
+
+    if product_name not in df['Product'].str.upper().values:  # เปลี่ยนเป็นพิมพ์ใหญ่เพื่อตรวจสอบ
         raise HTTPException(status_code=404, detail=f"No data found for product: {product_name}")
 
-    product_df = df[df['Product'] == product_name].copy()
+    product_df = df[df['Product'].str.upper() == product_name].copy()  # เปลี่ยนเป็นพิมพ์ใหญ่เพื่อตรวจสอบ
 
     if product_df.empty:
         raise HTTPException(status_code=404, detail=f"No data found for product: {product_name}")
@@ -73,3 +73,4 @@ def rank_product(request: ProductRequest):
     result["mill"]["Throughput"] = top_entry['Throughput mill (kg/h)']
 
     return result
+

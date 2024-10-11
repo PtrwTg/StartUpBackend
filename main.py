@@ -62,11 +62,13 @@ def rank_product(request: ProductRequest):
                 for key, value in params.items() if pd.notna(value)}
 
     result["extrude"]["Machine no."] = top_entry.get('Line', 'N/A')
-    extrude_params = top_entry[['Dosing', 'Side feed', 'HT1', 'HT2', 'HT3', 'HT4', 'HT5', 'Screw speed', 'Torque', 'Outlet temp']].to_dict()
+    extrude_params = top_entry[['Dosing', 'Side feed', 'HT1', 'HT2', 'HT3', 'HT4', 'HT5', 'Screw speed', 'Torque', #'Outlet temp'ยกเลิก parameter นี้ 
+                                ]].to_dict()
     result["extrude"]["Parameters"] = filter_parameters(extrude_params)
 
     result["mill"]["Machine no."] = top_entry.get('Mill', 'N/A')
-    mill_params = top_entry[['Feed', 'Sep.', 'Rotor', 'Air flow', 'Inlet temp.', 'Outlet temp.', 'FG. temp.']].to_dict()
+    mill_params = top_entry[['Feed', 'Sep.', 'Rotor', 'Air flow', #'Inlet temp.', 'Outlet temp.', 'FG. temp.' ยกเลิก parameter นี้ 
+                             ]].to_dict() 
     result["mill"]["Parameters"] = filter_parameters(mill_params)
 
     # Include 'Throughput mill (kg/h)' in the response

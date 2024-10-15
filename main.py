@@ -62,7 +62,7 @@ def rank_product(request: ProductRequest):
                 for key, value in params.items() if pd.notna(value)}
 
     result["extrude"]["Machine no."] = top_entry.get('Line', 'N/A')
-    extrude_params = top_entry[['Dosing', 'Side feed', 'HT1', 'HT2', 'HT3', 'HT4', 'HT5', 'Screw speed', 'Torque', #'Outlet temp'ยกเลิก parameter นี้ 
+    extrude_params = top_entry[['Dosing', 'Suggestion Side feed', 'HT1', 'HT2', 'HT3', 'HT4', 'HT5', 'Screw speed', 'Torque', #'Outlet temp'ยกเลิก parameter นี้ 
                                 ]].to_dict()
     result["extrude"]["Parameters"] = filter_parameters(extrude_params)
 

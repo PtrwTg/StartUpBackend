@@ -1,11 +1,15 @@
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi import FastAPI, HTTPException
+from starlette.responses import FileResponse  # นำเข้า FileResponse จาก starlette
 import pandas as pd
 import numpy as np
 from pydantic import BaseModel
 import os
-from fastapi.middleware.cors import CORSMiddleware
+import json
 import logging
+from typing import List
 
+# add multi
 # ตั้งค่า Logging เพื่อช่วย Debug
 logging.basicConfig(level=logging.DEBUG)
 
@@ -115,3 +119,52 @@ def rank_product(request: ProductRequest):
     logging.debug(f"Result: {result}")
 
     return result
+
+class MultipleProductRequest(BaseModel):
+    product_codes: List[str]
+
+@app.post("/rank_best_process/")
+def rank_best_process(request: MultipleProductRequest):
+    result = {}
+
+    for product_name in request.product_codes:
+        product_name = product_name.upper()
+
+        logging.debug(f"Processing product name: {product_name}")
+
+        if product_name not in df['Product'].str.upper().values: 
+            result[product_name] = {"error": f"No data found for product: {product_name}"}
+            continue
+
+        product_df = df[df['Product'].str.upper() == product_name].copy()
+
+        # มีค่า / ใน Column RFT-ext. และ RFT-Mill
+        filtered_df = product_df[(product_df['RFT-ext.'] == '/') & (product_df['RFT-Mill'] == '/')].copy()
+
+        if filtered_df.empty:
+            result[product_name] = {"error": "No matching data found for both RFT-ext. and RFT-Mill."}
+            continue
+
+        filtered_df = filtered_df.dropna(subset=['Throughput mill (kg/h)'])
+
+        if filtered_df.empty:
+            result[product_name] = {"warning": "No valid numerical data found in 'Throughput mill (kg/h)' column. Skipping throughput ranking."}
+            continue
+
+        filtered_sorted = filtered_df.sort_values(by='Throughput mill (kg/h)', ascending=False)
+        top_entry = filtered_sorted.iloc[0]
+
+        # ดึง Process order จาก Column 3 (PO)
+        best_process_order = top_entry['PO']
+
+        result[product_name] = best_process_order
+
+    # เขียน result เป็นไฟล์ JSON
+    json_file_path = "best_process_orders.json"
+    with open(json_file_path, "w") as f:
+        json.dump(result, f)
+
+    # ส่งไฟล์ JSON กลับไปยัง frontend
+    return FileResponse(path=json_file_path, filename="best_process_orders.json", media_type='application/json')
+
+

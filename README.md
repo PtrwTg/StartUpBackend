@@ -5,3 +5,4 @@
 รับข้อมูล Product ที่ส่งมา คืนออกมาเป็น jsonresponse ที่ข้างในมีข้อมูลพารามิเตอร์อยู่ 
 # @app.post("/rank_best_process/")
 รับข้อมูล Product ที่ส่งมาหลายตัว คืนออกมาเป็น json link ซึ่งข้างในเป็นข้อมูลในรูปแบบ Productcode : Processorder 
+นอกจากนั้นยังมีการแจ้ง Error และ Warning สำหรับ Productcode ที่ไม่มีข้อมูล RFT หรือ ไม่มีข้อมูล throughput

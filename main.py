@@ -5,9 +5,11 @@ import pandas as pd
 import numpy as np
 from pydantic import BaseModel
 import os
-import json
 import logging
 from typing import List
+from fastapi.responses import JSONResponse
+import uuid  # ใช้ UUID
+
 
 # add multi
 # ตั้งค่า Logging เพื่อช่วย Debug
@@ -122,6 +124,9 @@ def rank_product(request: ProductRequest):
 
 class MultipleProductRequest(BaseModel):
     product_codes: List[str]
+    
+# เก็บข้อมูล JSON ชั่วคราวด้วย UUID
+json_store = {}
 
 @app.post("/rank_best_process/")
 def rank_best_process(request: MultipleProductRequest):
@@ -129,7 +134,6 @@ def rank_best_process(request: MultipleProductRequest):
 
     for product_name in request.product_codes:
         product_name = product_name.upper()
-
         logging.debug(f"Processing product name: {product_name}")
 
         if product_name not in df['Product'].str.upper().values: 
@@ -159,12 +163,19 @@ def rank_best_process(request: MultipleProductRequest):
 
         result[product_name] = best_process_order
 
-    # เขียน result เป็นไฟล์ JSON
-    json_file_path = "best_process_orders.json"
-    with open(json_file_path, "w") as f:
-        json.dump(result, f)
+    # สร้าง UUID เพื่อใช้สำหรับ session นี้
+    json_id = str(uuid.uuid4())
+    json_store[json_id] = result  # เก็บข้อมูล JSON ไว้ในหน่วยความจำ
 
-    # ส่งไฟล์ JSON กลับไปยัง frontend
-    return FileResponse(path=json_file_path, filename="best_process_orders.json", media_type='application/json')
+    # คืนลิงก์ URL สำหรับดึงข้อมูล JSON
+    download_link = f"http://localhost:8000/download-json/{json_id}"
+    return {"download_link": download_link}
 
+# Endpoint สำหรับให้เพื่อนร่วมงานเข้ามาดาวน์โหลด JSON ผ่าน UUID
+@app.get("/download-json/{json_id}")
+def download_json(json_id: str):
+    if json_id not in json_store:
+        raise HTTPException(status_code=404, detail="JSON data not found")
+    
+    return JSONResponse(content=json_store[json_id])
 

@@ -146,13 +146,13 @@ def rank_best_process(request: MultipleProductRequest):
         filtered_df = product_df[(product_df['RFT-ext.'] == '/') & (product_df['RFT-Mill'] == '/')].copy()
 
         if filtered_df.empty:
-            result[product_name] = {"error": "No matching data found for both RFT-ext. and RFT-Mill."}
+            result[product_name] = {"No Data pass RFT"}
             continue
 
         filtered_df = filtered_df.dropna(subset=['Throughput mill (kg/h)'])
 
         if filtered_df.empty:
-            result[product_name] = {"warning": "No valid numerical data found in 'Throughput mill (kg/h)' column. Skipping throughput ranking."}
+            result[product_name] = {"Thoruhtput is error"}
             continue
 
         filtered_sorted = filtered_df.sort_values(by='Throughput mill (kg/h)', ascending=False)

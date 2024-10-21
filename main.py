@@ -10,8 +10,6 @@ from typing import List
 from fastapi.responses import JSONResponse
 import uuid  # ใช้ UUID
 
-
-# add multi
 # ตั้งค่า Logging เพื่อช่วย Debug
 logging.basicConfig(level=logging.DEBUG)
 
@@ -22,7 +20,7 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
-) 
+)
 
 # โหลดไฟล์ CSV และอ่าน
 file_path = 'RFT 2024.csv'  
@@ -122,46 +120,52 @@ def rank_product(request: ProductRequest):
 
     return result
 
-class MultipleProductRequest(BaseModel):
-    product_codes: List[str]
-    
+class ProductCode(BaseModel):
+    code: str
+
+class ProductListRequest(BaseModel):
+    product: List[ProductCode]
+
 # เก็บข้อมูล JSON ชั่วคราวด้วย UUID
 json_store = {}
 
 @app.post("/rank_best_process/")
-def rank_best_process(request: MultipleProductRequest):
-    result = {}
+def rank_best_process(request: ProductListRequest):
+    result = {"product": []}
 
-    for product_name in request.product_codes:
-        product_name = product_name.upper()
+    for product in request.product:
+        product_name = product.code.upper()
         logging.debug(f"Processing product name: {product_name}")
 
-        if product_name not in df['Product'].str.upper().values: 
-            result[product_name] = {"error": f"No data found for product: {product_name}"}
+        if product_name not in df['Product'].str.upper().values:
+            logging.error(f"No data found for product: {product_name}")
             continue
 
         product_df = df[df['Product'].str.upper() == product_name].copy()
 
-        # มีค่า / ใน Column RFT-ext. และ RFT-Mill
+        # กรองข้อมูลเฉพาะที่มีค่า '/' ใน RFT-ext. และ RFT-Mill
         filtered_df = product_df[(product_df['RFT-ext.'] == '/') & (product_df['RFT-Mill'] == '/')].copy()
 
         if filtered_df.empty:
-            result[product_name] = {"error" : "No Data pass RFT"}
+            logging.error(f"No Data pass RFT for product: {product_name}")
             continue
 
+        # กรองข้อมูลที่มีค่า Throughput mill (kg/h)
         filtered_df = filtered_df.dropna(subset=['Throughput mill (kg/h)'])
 
         if filtered_df.empty:
-            result[product_name] = {"warning" : "Thoruhtput is error"}
+            logging.warning(f"Thoruhtput is error for product: {product_name}")
             continue
 
+        # เรียงลำดับตาม Throughput mill (kg/h) และเลือกอันที่ดีที่สุด
         filtered_sorted = filtered_df.sort_values(by='Throughput mill (kg/h)', ascending=False)
         top_entry = filtered_sorted.iloc[0]
 
         # ดึง Process order จาก Column 3 (PO)
         best_process_order = top_entry['PO']
 
-        result[product_name] = best_process_order
+        # เพิ่มข้อมูลใน JSON ที่จะส่งกลับ
+        result["product"].append({"code": product_name, "po": best_process_order})
 
     # สร้าง UUID เพื่อใช้สำหรับ session นี้
     json_id = str(uuid.uuid4())
@@ -171,11 +175,10 @@ def rank_best_process(request: MultipleProductRequest):
     download_link = f"https://web-production-6f0b.up.railway.app/download-json/{json_id}"
     return {"download_link": download_link}
 
-# Endpoint สำหรับให้เพื่อนร่วมงานเข้ามาดาวน์โหลด JSON ผ่าน UUID
+# Endpoint สำหรับให้คุณติ่งเข้ามาดาวน์โหลด JSON ผ่าน UUID
 @app.get("/download-json/{json_id}")
 def download_json(json_id: str):
     if json_id not in json_store:
         raise HTTPException(status_code=404, detail="JSON data not found")
     
     return JSONResponse(content=json_store[json_id])
-

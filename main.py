@@ -10,6 +10,8 @@ from typing import List, Dict
 from fastapi.responses import JSONResponse
 import uuid  # ใช้ UUID
 import json  # ใช้สำหรับแปลงสตริงเป็น JSON
+import httpx
+
 
 # ตั้งค่า Logging เพื่อช่วย Debug
 logging.basicConfig(level=logging.DEBUG)
@@ -168,13 +170,7 @@ def rank_best_process(request: ProductListRequest):
         # เพิ่มข้อมูลใน JSON ที่จะส่งกลับ
         result["product"].append({"code": product_name, "po": best_process_order})
 
-    # สร้าง UUID เพื่อใช้สำหรับ session นี้
-    json_id = str(uuid.uuid4())
-    json_store[json_id] = result  # เก็บข้อมูล JSON ไว้ในหน่วยความจำ
-
-    # คืนลิงก์ URL สำหรับดึงข้อมูล JSON
-    download_link = f"https://web-production-6f0b.up.railway.app/download-json/{json_id}"
-    return {"download_link": download_link}
+    return result
 
 # Endpoint สำหรับให้คุณติ่งเข้ามาดาวน์โหลด JSON ผ่าน UUID
 @app.get("/download-json/{json_id}")
@@ -193,3 +189,49 @@ async def rank_best_process_string(request: Request):
         return rank_best_process(product_list_request)
     except json.JSONDecodeError as e:
         raise HTTPException(status_code=400, detail=f"Invalid JSON format: {e}")
+
+# ตัวแปรเพื่อเก็บผลลัพธ์ JSON ranked_data
+ranked_data = None
+
+@app.get("/fetch_external_data/")
+async def fetch_external_data():
+    global ranked_data  # ใช้ตัวแปร global เพื่อเก็บผลลัพธ์ JSON ranked_data
+    url = "http://182.52.113.42:8080/ssa/production/wip_new/extruder_control/fetch_link.php"
+    
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.get(url)
+            response.raise_for_status()  # ตรวจสอบว่าการร้องขอสำเร็จหรือไม่
+            data = response.json()  # แปลงข้อมูลที่ได้เป็น JSON
+    except httpx.HTTPStatusError as e:
+        raise HTTPException(status_code=e.response.status_code, detail=f"HTTP error occurred: {e}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"An error occurred: {e}")
+
+    # ตรวจสอบว่าข้อมูลที่ได้เป็นสตริง JSON หรือไม่
+    if isinstance(data, str):
+        data = json.loads(data)  # แปลงสตริง JSON เป็นออบเจ็กต์ Python
+
+    # แปลงข้อมูลให้อยู่ในรูปแบบ JSON ที่ต้องการ
+    transformed_data = {"product": [{"code": item["code"]} for item in data["product"]]}
+
+    # เรียกใช้ API /rank_best_process/ ด้วยข้อมูลที่แปลงแล้ว
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.post("https://web-production-6f0b.up.railway.app/rank_best_process/", json=transformed_data)
+            response.raise_for_status()
+            ranked_data = response.json()
+    except httpx.HTTPStatusError as e:
+        raise HTTPException(status_code=e.response.status_code, detail=f"HTTP error occurred while ranking: {e}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"An error occurred while ranking: {e}")
+
+    return ranked_data
+
+@app.get("/")
+async def get_ranked_data():
+    global ranked_data  # ใช้ตัวแปร global เพื่อเก็บผลลัพธ์ JSON ranked_data
+    ranked_data = await fetch_external_data()  # เรียกใช้ API /fetch_external_data/ เพื่ออัปเดต ranked_data
+    if ranked_data is None:
+        raise HTTPException(status_code=404, detail="No ranked data available. Please fetch external data first.")
+    return ranked_data

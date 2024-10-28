@@ -1,14 +1,15 @@
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from starlette.responses import FileResponse  # นำเข้า FileResponse จาก starlette
 import pandas as pd
 import numpy as np
 from pydantic import BaseModel
 import os
 import logging
-from typing import List
+from typing import List, Dict
 from fastapi.responses import JSONResponse
 import uuid  # ใช้ UUID
+import json  # ใช้สำหรับแปลงสตริงเป็น JSON
 
 # ตั้งค่า Logging เพื่อช่วย Debug
 logging.basicConfig(level=logging.DEBUG)
@@ -172,7 +173,7 @@ def rank_best_process(request: ProductListRequest):
     json_store[json_id] = result  # เก็บข้อมูล JSON ไว้ในหน่วยความจำ
 
     # คืนลิงก์ URL สำหรับดึงข้อมูล JSON
-    download_link = f"https://web-production-6f0b.up.railway.app/download-json/{json_id}"
+    download_link = f"http://localhost:8000/download-json/{json_id}"
     return {"download_link": download_link}
 
 # Endpoint สำหรับให้คุณติ่งเข้ามาดาวน์โหลด JSON ผ่าน UUID
@@ -182,3 +183,13 @@ def download_json(json_id: str):
         raise HTTPException(status_code=404, detail="JSON data not found")
     
     return JSONResponse(content=json_store[json_id])
+
+@app.post("/rank_best_process_string/")
+async def rank_best_process_string(request: Request):
+    try:
+        request_body = await request.body()
+        request_json = json.loads(request_body.decode('utf-8'))
+        product_list_request = ProductListRequest(**request_json)
+        return rank_best_process(product_list_request)
+    except json.JSONDecodeError as e:
+        raise HTTPException(status_code=400, detail=f"Invalid JSON format: {e}")

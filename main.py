@@ -173,7 +173,7 @@ def rank_best_process(request: ProductListRequest):
     json_store[json_id] = result  # เก็บข้อมูล JSON ไว้ในหน่วยความจำ
 
     # คืนลิงก์ URL สำหรับดึงข้อมูล JSON
-    download_link = f"http://localhost:8000/download-json/{json_id}"
+    download_link = f"https://web-production-6f0b.up.railway.app/download-json/{json_id}"
     return {"download_link": download_link}
 
 # Endpoint สำหรับให้คุณติ่งเข้ามาดาวน์โหลด JSON ผ่าน UUID

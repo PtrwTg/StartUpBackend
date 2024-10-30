@@ -59,10 +59,10 @@ def rank_product(request: ProductRequest):
 
     logging.debug(f"Received product name: {product_name}")
 
-    if product_name not in df['Product'].str.upper().values: 
+    if product_name not in df['Product'].str.upper().values:
         raise HTTPException(status_code=404, detail=f"No data found for product: {product_name}")
 
-    product_df = df[df['Product'].str.upper() == product_name].copy()  
+    product_df = df[df['Product'].str.upper() == product_name].copy()
 
     if product_df.empty:
         raise HTTPException(status_code=404, detail=f"No data found for product: {product_name}")
@@ -81,7 +81,7 @@ def rank_product(request: ProductRequest):
 
     if filtered_df.empty:
         return {"warning": "No valid numerical data found in 'Throughput mill (kg/h)' column. Skipping throughput ranking."}
-    
+
     # หยิบค่ามากที่สุดของ Throughput mill (kg/h)
     filtered_sorted = filtered_df.sort_values(by='Throughput mill (kg/h)', ascending=False)
 
@@ -91,45 +91,72 @@ def rank_product(request: ProductRequest):
 
     logging.debug(f"Top Entry: {top_entry}")
 
+    # แปลงคอลัมน์ที่จำเป็นเป็นตัวเลข
+    numeric_columns = ['Line', 'Mill', 'Throughput mill (kg/h)', 'Throughput ext.(kg/h)',
+                       'Dosing', 'Suggestion Side feed', 'HT1', 'HT2', 'HT3', 'HT4', 'HT5',
+                       'Screw speed', 'Torque', 'Feed', 'Sep.', 'Rotor', 'Air flow']
+    for col in numeric_columns:
+        if col in top_entry and pd.notnull(top_entry[col]):
+            try:
+                top_entry[col] = float(top_entry[col])
+            except ValueError:
+                pass  # ถ้าแปลงไม่ได้ ให้ข้ามไป
+
     def filter_parameters(params):
         def round_tens(value):
-            if isinstance(value, (int, float)):
-                return int(np.round(value / 10.0) * 10)
-            return value  # ถ้าไม่ใช่ตัวเลข ให้คืนค่าดั้งเดิม
+            if pd.isnull(value):
+                return value
+            try:
+                numeric_value = float(value)
+                return int(round(numeric_value / 10) * 10)
+            except ValueError:
+                return value  # ถ้าไม่สามารถแปลงเป็นตัวเลขได้ ให้คืนค่าดั้งเดิม
 
         def round_torque(value):
-            if isinstance(value, (int, float)):
-                return 5 * round(value / 5)
-            return value  # ถ้าไม่ใช่ตัวเลข ให้คืนค่าดั้งเดิม
+            if pd.isnull(value):
+                return value
+            try:
+                numeric_value = float(value)
+                return round(numeric_value, 2)
+            except ValueError:
+                return value  # ถ้าไม่สามารถแปลงเป็นตัวเลขได้ ให้คืนค่าดั้งเดิม
 
         for key, value in params.items():
-            if pd.notna(value):
-                # แปลงค่าจาก string ให้เป็นตัวเลขถ้าจำเป็น
-                if isinstance(value, str) and value.isdigit():
-                    value = float(value)
-
-                # ตรวจสอบและปัดค่าเฉพาะในพารามิเตอร์ที่ระบุ
-                if key in ['HT1', 'HT2', 'HT3', 'HT4', 'HT5', 'Screw speed']:
-                    params[key] = round_tens(value)
-                elif key == 'Torque':
-                    params[key] = round_torque(value)
-                else:
-                    params[key] = value  # ค่าพารามิเตอร์อื่นๆ ให้คงเดิม
-                
+            if key in ['HT1', 'HT2', 'HT3', 'HT4', 'HT5', 'Screw speed']:
+                params[key] = round_tens(value)
+            elif key == 'Torque':
+                params[key] = round_torque(value)
+            else:
+                params[key] = value
         return params
 
-    # คืน Extrude และข้อมูลใน Column ต่างๆของมัน 
-    result["extrude"]["Machine no."] = top_entry.get('Line', 'N/A')
+    # คืน Extrude และข้อมูลใน Column ต่างๆของมัน
+    result["extrude"]["Machine no."] = int(top_entry.get('Line')) if pd.notnull(top_entry.get('Line')) else 'N/A'
     extrude_params = top_entry[['Dosing', 'Suggestion Side feed', 'HT1', 'HT2', 'HT3', 'HT4', 'HT5', 'Screw speed', 'Torque']].to_dict()
     result["extrude"]["Parameters"] = filter_parameters(extrude_params)
 
-    # คืน Mill และข้อมูลใน Column ต่างๆของมัน 
-    result["mill"]["Machine no."] = top_entry.get('Mill', 'N/A')
-    mill_params = top_entry[['Feed', 'Sep.', 'Rotor', 'Air flow']].to_dict() 
+    # คืน Mill และข้อมูลใน Column ต่างๆของมัน
+    result["mill"]["Machine no."] = int(top_entry.get('Mill')) if pd.notnull(top_entry.get('Mill')) else 'N/A'
+    mill_params = top_entry[['Feed', 'Sep.', 'Rotor', 'Air flow']].to_dict()
     result["mill"]["Parameters"] = filter_parameters(mill_params)
 
     # คืน Throughput
-    result["mill"]["Throughput"] = top_entry['Throughput mill (kg/h)']
+    result["mill"]["Throughput"] = float(top_entry['Throughput mill (kg/h)']) if pd.notnull(top_entry['Throughput mill (kg/h)']) else None
+
+    # แปลงค่าใน result ให้เป็นประเภทข้อมูลมาตรฐาน
+    def convert_values(obj):
+        if isinstance(obj, dict):
+            return {k: convert_values(v) for k, v in obj.items()}
+        elif isinstance(obj, list):
+            return [convert_values(i) for i in obj]
+        elif isinstance(obj, (np.integer, np.int64, np.int32)):
+            return int(obj)
+        elif isinstance(obj, (np.floating, np.float64, np.float32)):
+            return float(obj)
+        else:
+            return obj
+
+    result = convert_values(result)
 
     logging.debug(f"Result: {result}")
 
@@ -230,7 +257,7 @@ async def fetch_external_data():
     # เรียกใช้ API /rank_best_process/ ด้วยข้อมูลที่แปลงแล้ว
     try:
         async with httpx.AsyncClient() as client:
-            response = await client.post("https://web-production-6f0b.up.railway.app/rank_best_process/", json=transformed_data)
+            response = await client.post("http://localhost:8000/rank_best_process/", json=transformed_data)
             response.raise_for_status()
             ranked_data = response.json()
     except httpx.HTTPStatusError as e:
@@ -451,7 +478,7 @@ async def combine_files():
     # เก็บข้อมูล combined_data ใน uploaded_files_data
     uploaded_files_data['combined_data'] = combined_df
 
-    # บันทึกไฟล์ CSV ชั่วคราว
+    # บันทึกไ���ล์ CSV ชั่วคราว
     temp_file = NamedTemporaryFile(delete=False, suffix=".csv")
     combined_df.to_csv(temp_file.name, index=False, encoding='utf-8-sig')
 
@@ -489,12 +516,3 @@ async def append_combined_data():
         return {"detail": "Data appended successfully to RFT 2024.csv."}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"An error occurred while processing the files: {e}")
-
-
-
-
-
-
-
-
-

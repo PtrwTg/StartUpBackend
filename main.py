@@ -16,6 +16,14 @@ from io import BytesIO
 
 app = FastAPI()
 
+# สร้าง dict เพื่อเก็บข้อมูลชั่วคราว
+uploaded_files_data = {
+    'parameter': None,
+    'extrude': None,
+    'mill': None,
+    'qapd': None,
+    "combined": None
+}
 
 # ตั้งค่า Logging เพื่อช่วย Debug
 logging.basicConfig(level=logging.DEBUG)
@@ -241,8 +249,7 @@ async def get_ranked_data():
     return ranked_data
 
 
-# @app.post("/upload-extrude/")
-# @app.post("/upload-mill/")
+
 
 @app.post("/upload-parameter/")
 async def upload_parameter(file: UploadFile = File(...), sheet_name: str = 'Sheet1'):
@@ -295,6 +302,8 @@ async def upload_parameter(file: UploadFile = File(...), sheet_name: str = 'Shee
 
    # ล้างข้อมูลที่ไม่จำเป็นออกจากคอลัมน์ทั้งหมด
     df = df.applymap(lambda x: x.strip() if isinstance(x, str) else x)
+    
+    uploaded_files_data['parameter'] = df  
 
 # บันทึกไฟล์ CSV ชั่วคราวด้วยการเข้ารหัส 'utf-8-sig'
     temp_file = NamedTemporaryFile(delete=False, suffix=".csv")
@@ -324,8 +333,13 @@ async def upload_extrude(file: UploadFile = File(...)):
     df_cleaned = df[['ProcessOrderId', 'ActualThroughput_AvgWeighted']]
     df_cleaned.columns = ['PO', 'Throughput ext.(kg/h)']
 
+    # ลบแถวที่มีค่า Throughput ext.(kg/h) เกิน 2000
+    df_cleaned = df_cleaned[df_cleaned['Throughput ext.(kg/h)'] <= 2000]
+
     # ล้างข้อมูลที่ไม่จำเป็นออกจากคอลัมน์
     df_cleaned = df_cleaned.applymap(lambda x: x.strip() if isinstance(x, str) else x)
+
+    uploaded_files_data['extrude'] = df_cleaned
 
     # บันทึกไฟล์ CSV ชั่วคราว
     temp_file = NamedTemporaryFile(delete=False, suffix=".csv")
@@ -355,9 +369,12 @@ async def upload_mill(file: UploadFile = File(...)):
     df_cleaned = df[['ProcessOrderId', 'ActualThroughput_AvgWeighted']]
     df_cleaned.columns = ['PO', 'Throughput mill (kg/h)']
 
+    # ลบแถวที่มีค่า Throughput mill (kg/h) เกิน 2000
+    df_cleaned = df_cleaned[df_cleaned['Throughput mill (kg/h)'] <= 2000]
+
     # ล้างข้อมูลที่ไม่จำเป็นออกจากคอลัมน์
     df_cleaned = df_cleaned.applymap(lambda x: x.strip() if isinstance(x, str) else x)
-
+    uploaded_files_data['mill'] = df_cleaned
     # บันทึกไฟล์ CSV ชั่วคราว
     temp_file = NamedTemporaryFile(delete=False, suffix=".csv")
     df_cleaned.to_csv(temp_file.name, index=False, encoding='utf-8-sig')
@@ -396,6 +413,8 @@ async def upload_qapd(file: UploadFile = File(...)):
     # ลบ Rows ที่มีค่า PO เป็นค่าว่าง
     df_cleaned = df_cleaned[df_cleaned['PO'] != '']
 
+    uploaded_files_data['qapd'] = df_cleaned
+
     # บันทึกไฟล์ CSV ชั่วคราว
     temp_file = NamedTemporaryFile(delete=False, suffix=".csv")
     df_cleaned.to_csv(temp_file.name, index=False, encoding='utf-8-sig')
@@ -407,6 +426,74 @@ async def upload_qapd(file: UploadFile = File(...)):
         media_type="text/csv",
         headers={"Content-Disposition": "attachment; filename=cleaned_qapd.csv"}
     )
+
+@app.post("/combine-files/")
+async def combine_files():
+    # ตรวจสอบว่าไฟล์ทั้งหมดถูกอัปโหลดและคลีนแล้ว
+    if not all(key in uploaded_files_data and uploaded_files_data[key] is not None for key in ['parameter', 'extrude', 'mill', 'qapd']):
+        raise HTTPException(status_code=400, detail="All files (parameter, extrude, mill, qapd) must be uploaded and cleaned first.")
+
+    # ดึงข้อมูลจาก dict
+    df_parameter = uploaded_files_data['parameter']
+    df_extrude = uploaded_files_data['extrude']
+    df_mill = uploaded_files_data['mill']
+    df_qapd = uploaded_files_data['qapd']
+
+    # รวมข้อมูลโดยใช้คอลัมน์ PO เป็นหลัก
+    combined_df = df_parameter.copy()
+    combined_df = combined_df.merge(df_extrude, on='PO', how='left')
+    combined_df = combined_df.merge(df_mill, on='PO', how='left')
+    combined_df = combined_df.merge(df_qapd, on='PO', how='left')
+
+    # ลบข้อมูลซ้ำ
+    combined_df = combined_df.drop_duplicates(subset=['PO'])
+
+    # เก็บข้อมูล combined_data ใน uploaded_files_data
+    uploaded_files_data['combined_data'] = combined_df
+
+    # บันทึกไฟล์ CSV ชั่วคราว
+    temp_file = NamedTemporaryFile(delete=False, suffix=".csv")
+    combined_df.to_csv(temp_file.name, index=False, encoding='utf-8-sig')
+
+    # ส่งไฟล์ CSV กลับเป็นการตอบกลับ
+    temp_file.seek(0)
+    return StreamingResponse(
+        iter([temp_file.read()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=combined_data.csv"}
+    )
+
+@app.post("/append-combined-data/")
+async def append_combined_data():
+    # ตรวจสอบว่ามีข้อมูล combined_data ใน uploaded_files_data หรือไม่
+    if 'combined_data' not in uploaded_files_data or uploaded_files_data['combined_data'] is None:
+        raise HTTPException(status_code=400, detail="Combined data not found. Please combine files first.")
+
+    try:
+        # ใช้ข้อมูล combined_data จาก uploaded_files_data
+        combined_data = uploaded_files_data['combined_data']
+
+        # อ่านข้อมูลจากไฟล์ RFT 2024.csv
+        rft_file_path = 'RFT 2024.csv'
+        if not os.path.exists(rft_file_path):
+            raise HTTPException(status_code=404, detail="RFT 2024.csv not found on the server.")
+        
+        rft_data = pd.read_csv(rft_file_path)
+
+        # รวมข้อมูลจากทั้งสองไฟล์
+        combined_df = pd.concat([rft_data, combined_data], ignore_index=True)
+
+        # บันทึกข้อมูลที่รวมแล้วเป็นไฟล์ RFT 2024.csv
+        combined_df.to_csv(rft_file_path, index=False, encoding='utf-8-sig')
+
+        return {"detail": "Data appended successfully to RFT 2024.csv."}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"An error occurred while processing the files: {e}")
+
+
+
+
+
 
 
 

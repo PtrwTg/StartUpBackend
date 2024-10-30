@@ -14,6 +14,8 @@ import httpx
 from tempfile import NamedTemporaryFile
 from io import BytesIO
 
+app = FastAPI()
+
 
 # ตั้งค่า Logging เพื่อช่วย Debug
 logging.basicConfig(level=logging.DEBUG)
@@ -238,13 +240,7 @@ async def get_ranked_data():
         raise HTTPException(status_code=404, detail="No ranked data available. Please fetch external data first.")
     return ranked_data
 
-from fastapi import FastAPI, File, UploadFile, HTTPException
-from io import BytesIO
-import pandas as pd
-from tempfile import NamedTemporaryFile
-from fastapi.responses import StreamingResponse
 
-app = FastAPI()
 # @app.post("/upload-extrude/")
 # @app.post("/upload-mill/")
 

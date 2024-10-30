@@ -222,7 +222,7 @@ async def fetch_external_data():
     # เรียกใช้ API /rank_best_process/ ด้วยข้อมูลที่แปลงแล้ว
     try:
         async with httpx.AsyncClient() as client:
-            response = await client.post("http://localhost:8000/rank_best_process/", json=transformed_data)
+            response = await client.post("https://web-production-6f0b.up.railway.app/rank_best_process/", json=transformed_data)
             response.raise_for_status()
             ranked_data = response.json()
     except httpx.HTTPStatusError as e:

@@ -1,5 +1,5 @@
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, UploadFile, File
 from starlette.responses import FileResponse  # นำเข้า FileResponse จาก starlette
 import pandas as pd
 import numpy as np
@@ -7,10 +7,12 @@ from pydantic import BaseModel
 import os
 import logging
 from typing import List, Dict
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 import uuid  # ใช้ UUID
 import json  # ใช้สำหรับแปลงสตริงเป็น JSON
 import httpx
+from tempfile import NamedTemporaryFile
+from io import BytesIO
 
 
 # ตั้งค่า Logging เพื่อช่วย Debug
@@ -218,7 +220,7 @@ async def fetch_external_data():
     # เรียกใช้ API /rank_best_process/ ด้วยข้อมูลที่แปลงแล้ว
     try:
         async with httpx.AsyncClient() as client:
-            response = await client.post("https://web-production-6f0b.up.railway.app/rank_best_process/", json=transformed_data)
+            response = await client.post("http://localhost:8000/rank_best_process/", json=transformed_data)
             response.raise_for_status()
             ranked_data = response.json()
     except httpx.HTTPStatusError as e:
@@ -235,3 +237,181 @@ async def get_ranked_data():
     if ranked_data is None:
         raise HTTPException(status_code=404, detail="No ranked data available. Please fetch external data first.")
     return ranked_data
+
+from fastapi import FastAPI, File, UploadFile, HTTPException
+from io import BytesIO
+import pandas as pd
+from tempfile import NamedTemporaryFile
+from fastapi.responses import StreamingResponse
+
+app = FastAPI()
+# @app.post("/upload-extrude/")
+# @app.post("/upload-mill/")
+
+@app.post("/upload-parameter/")
+async def upload_parameter(file: UploadFile = File(...), sheet_name: str = 'Sheet1'):
+    # ตรวจสอบประเภทไฟล์
+    if not file.filename.endswith(('.xlsx', '.xls')):
+        raise HTTPException(status_code=400, detail="Please upload a valid Excel file with .xlsx or .xls extension")
+
+    # อ่านไฟล์โดยตรงจากไบต์
+    try:
+        contents = await file.read()
+        excel_data = BytesIO(contents)
+        
+        # เลือก engine ตามประเภทไฟล์
+        if file.filename.endswith('.xls'):
+            df = pd.read_excel(excel_data, sheet_name=sheet_name, engine='xlrd')
+        else:
+            df = pd.read_excel(excel_data, sheet_name=sheet_name, engine='openpyxl')
+            
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Error reading the Excel file: {e}")
+
+    # เลือกคอลัมน์ที่ต้องการและเปลี่ยนชื่อ
+    columns_to_keep = {
+        'Batch no.': 'Batch no.',
+        'Process no.': 'PO',
+        'Product code': 'Product',
+        'Line': 'Line',
+        'Mill-1': 'Mill',
+        'Extrusion (Dosing)': 'Dosing',
+        'Extrusion (Side feed)': 'Suggestion Side feed',
+        'HT1 (C)': 'HT1',
+        'HT2 (C)': 'HT2',
+        'HT3 (C)': 'HT3',
+        'HT4 (C)': 'HT4',
+        'HT5 (C)': 'HT5',
+        'Screw speed (rpm)': 'Screw speed',
+        'Torque (%)': 'Torque',
+        'Milling-1 (Feed)': 'Feed',
+        'Milling-1 (Sep.)': 'Sep.',
+        'Milling-1 (Rotor)': 'Rotor',
+        'Milling-1 (Air flow)': 'Air flow'
+    }
+
+    # กรองและเปลี่ยนชื่อคอลัมน์
+    try:
+        df = df[list(columns_to_keep.keys())]
+        df = df.rename(columns=columns_to_keep)
+    except KeyError as e:
+        raise HTTPException(status_code=400, detail=f"Missing required columns: {e}")
+
+   # ล้างข้อมูลที่ไม่จำเป็นออกจากคอลัมน์ทั้งหมด
+    df = df.applymap(lambda x: x.strip() if isinstance(x, str) else x)
+
+# บันทึกไฟล์ CSV ชั่วคราวด้วยการเข้ารหัส 'utf-8-sig'
+    temp_file = NamedTemporaryFile(delete=False, suffix=".csv")
+    df.to_csv(temp_file.name, index=False, encoding='utf-8-sig')
+
+    # ส่งไฟล์ CSV กลับเป็นการตอบกลับ
+    temp_file.seek(0)
+    return StreamingResponse(
+        iter([temp_file.read()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=cleaned_parameter.csv"}
+    )
+
+@app.post("/upload-extrude/")
+async def upload_extrude(file: UploadFile = File(...)):
+    if not file.filename.endswith(('.xlsx', '.xls')):
+        raise HTTPException(status_code=400, detail="Please upload a valid Excel file with .xlsx or .xls extension")
+
+    try:
+        contents = await file.read()
+        excel_data = BytesIO(contents)
+        df = pd.read_excel(excel_data, header=2)  # ใช้ row ที่ 3 เป็น header
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Error reading the Excel file: {e}")
+
+    # เลือกคอลัมน์ที่ต้องการและเปลี่ยนชื่อ
+    df_cleaned = df[['ProcessOrderId', 'ActualThroughput_AvgWeighted']]
+    df_cleaned.columns = ['PO', 'Throughput ext.(kg/h)']
+
+    # ล้างข้อมูลที่ไม่จำเป็นออกจากคอลัมน์
+    df_cleaned = df_cleaned.applymap(lambda x: x.strip() if isinstance(x, str) else x)
+
+    # บันทึกไฟล์ CSV ชั่วคราว
+    temp_file = NamedTemporaryFile(delete=False, suffix=".csv")
+    df_cleaned.to_csv(temp_file.name, index=False, encoding='utf-8-sig')
+
+    # ส่งไฟล์ CSV กลับเป็นการตอบกลับ
+    temp_file.seek(0)
+    return StreamingResponse(
+        iter([temp_file.read()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=cleaned_extrude.csv"}
+    )
+
+@app.post("/upload-mill/")
+async def upload_mill(file: UploadFile = File(...)):
+    if not file.filename.endswith(('.xlsx', '.xls')):
+        raise HTTPException(status_code=400, detail="Please upload a valid Excel file with .xlsx or .xls extension")
+
+    try:
+        contents = await file.read()
+        excel_data = BytesIO(contents)
+        df = pd.read_excel(excel_data, header=2)  # ใช้ row ที่ 3 เป็น header
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Error reading the Excel file: {e}")
+
+    # เลือกคอลัมน์ที่ต้องการและเปลี่ยนชื่อ
+    df_cleaned = df[['ProcessOrderId', 'ActualThroughput_AvgWeighted']]
+    df_cleaned.columns = ['PO', 'Throughput mill (kg/h)']
+
+    # ล้างข้อมูลที่ไม่จำเป็นออกจากคอลัมน์
+    df_cleaned = df_cleaned.applymap(lambda x: x.strip() if isinstance(x, str) else x)
+
+    # บันทึกไฟล์ CSV ชั่วคราว
+    temp_file = NamedTemporaryFile(delete=False, suffix=".csv")
+    df_cleaned.to_csv(temp_file.name, index=False, encoding='utf-8-sig')
+
+    # ส่งไฟล์ CSV กลับเป็นการตอบกลับ
+    temp_file.seek(0)
+    return StreamingResponse(
+        iter([temp_file.read()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=cleaned_mill.csv"}
+    )
+
+@app.post("/upload-qapd/")
+async def upload_qapd(file: UploadFile = File(...)):
+    if not file.filename.endswith(('.xlsx', '.xls')):
+        raise HTTPException(status_code=400, detail="Please upload a valid Excel file with .xlsx or .xls extension")
+
+    try:
+        contents = await file.read()
+        excel_data = BytesIO(contents)
+        # อ่านข้อมูลจากชีทที่ชื่อว่า 'Data 2023-2024'
+        df = pd.read_excel(excel_data, sheet_name='Data 2023-2024', header=0)  # ใช้ row แรกเป็น header
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Error reading the Excel file: {e}")
+
+    # เลือกคอลัมน์ที่ต้องการ
+    df_cleaned = df[['Work Order no.', 'Granule', 'Defect (NCR)']]
+
+    # ประมวลผลข้อมูลตามเงื่อนไข
+    df_cleaned['Granule'] = df_cleaned['Granule'].apply(lambda x: '' if pd.notnull(x) else '/')
+    df_cleaned['Defect (NCR)'] = df_cleaned['Defect (NCR)'].apply(lambda x: '' if pd.notnull(x) else '/')
+
+    # เปลี่ยนชื่อคอลัมน์
+    df_cleaned.columns = ['PO', 'RFT-ext.', 'RFT-Mill']
+
+    # ลบ Rows ที่มีค่า PO เป็นค่าว่าง
+    df_cleaned = df_cleaned[df_cleaned['PO'] != '']
+
+    # บันทึกไฟล์ CSV ชั่วคราว
+    temp_file = NamedTemporaryFile(delete=False, suffix=".csv")
+    df_cleaned.to_csv(temp_file.name, index=False, encoding='utf-8-sig')
+
+    # ส่งไฟล์ CSV กลับเป็นการตอบกลับ
+    temp_file.seek(0)
+    return StreamingResponse(
+        iter([temp_file.read()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=cleaned_qapd.csv"}
+    )
+
+
+
+

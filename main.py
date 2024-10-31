@@ -117,7 +117,14 @@ def rank_product(request: ProductRequest):
                 return value
             try:
                 numeric_value = float(value)
-                return round(numeric_value, 2)
+                if numeric_value % 10 in [3, 4, 6, 7]:
+                    return (numeric_value // 10) * 10 + 5
+                elif numeric_value % 10 in [1, 2]:
+                    return (numeric_value // 10) * 10
+                elif numeric_value % 10 in [8, 9]:
+                    return (numeric_value // 10) * 10 + 10
+                else:
+                    return round(numeric_value, 2)
             except ValueError:
                 return value  # ถ้าไม่สามารถแปลงเป็นตัวเลขได้ ให้คืนค่าดั้งเดิม
 
@@ -214,7 +221,7 @@ def rank_best_process(request: ProductListRequest):
 # Endpoint สำหรับให้คุณติ่งเข้ามาดาวน์โหลด JSON ผ่าน UUID
 @app.get("/download-json/{json_id}")
 def download_json(json_id: str):
-    if json_id not in json_store:
+    if (json_id not in json_store):
         raise HTTPException(status_code=404, detail="JSON data not found")
     
     return JSONResponse(content=json_store[json_id])
@@ -257,7 +264,7 @@ async def fetch_external_data():
     # เรียกใช้ API /rank_best_process/ ด้วยข้อมูลที่แปลงแล้ว
     try:
         async with httpx.AsyncClient() as client:
-            response = await client.post("https://web-production-6f0b.up.railway.app/rank_best_process/", json=transformed_data)
+            response = await client.post("http://localhost:8000/rank_best_process/", json=transformed_data)
             response.raise_for_status()
             ranked_data = response.json()
     except httpx.HTTPStatusError as e:
@@ -478,7 +485,7 @@ async def combine_files():
     # เก็บข้อมูล combined_data ใน uploaded_files_data
     uploaded_files_data['combined_data'] = combined_df
 
-    # บันทึกไ���ล์ CSV ชั่วคราว
+    # บันทึกไฟล์ CSV ชั่วคราว
     temp_file = NamedTemporaryFile(delete=False, suffix=".csv")
     combined_df.to_csv(temp_file.name, index=False, encoding='utf-8-sig')
 
@@ -494,25 +501,29 @@ async def combine_files():
 async def append_combined_data():
     # ตรวจสอบว่ามีข้อมูล combined_data ใน uploaded_files_data หรือไม่
     if 'combined_data' not in uploaded_files_data or uploaded_files_data['combined_data'] is None:
-        raise HTTPException(status_code=400, detail="Combined data not found. Please combine files first.")
-
+        raise HTTPException(status_code=400, detail="ไม่พบข้อมูล combined data กรุณารวมไฟล์ก่อน.")
     try:
         # ใช้ข้อมูล combined_data จาก uploaded_files_data
         combined_data = uploaded_files_data['combined_data']
-
         # อ่านข้อมูลจากไฟล์ RFT 2024.csv
         rft_file_path = 'RFT 2024.csv'
         if not os.path.exists(rft_file_path):
-            raise HTTPException(status_code=404, detail="RFT 2024.csv not found on the server.")
+            raise HTTPException(status_code=404, detail="ไม่พบไฟล์ RFT 2024.csv บนเซิร์ฟเวอร์.")
         
         rft_data = pd.read_csv(rft_file_path)
-
         # รวมข้อมูลจากทั้งสองไฟล์
         combined_df = pd.concat([rft_data, combined_data], ignore_index=True)
-
         # บันทึกข้อมูลที่รวมแล้วเป็นไฟล์ RFT 2024.csv
         combined_df.to_csv(rft_file_path, index=False, encoding='utf-8-sig')
-
-        return {"detail": "Data appended successfully to RFT 2024.csv."}
+        
+        # โหลดไฟล์ CSV และอ่านใหม่อีกครั้ง
+        global df
+        df = pd.read_csv(rft_file_path)
+        
+        # ตรวจสอบว่าข้อมูลถูกโหลดใหม่หรือไม่
+        logging.debug(f"Updated DataFrame: {df.head()}")
+        
+        return {"detail": "เพิ่มข้อมูลลงใน RFT 2024.csv และโหลดใหม่เรียบร้อยแล้ว."}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"An error occurred while processing the files: {e}")
+        logging.error(f"Error occurred: {e}")
+        raise HTTPException(status_code=500, detail=f"เกิดข้อผิดพลาดขณะประมวลผลไฟล์: {e}")
